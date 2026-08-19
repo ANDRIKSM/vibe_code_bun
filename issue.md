@@ -1,82 +1,71 @@
-# Planning: Fullstack Excel Processing Application
+# Planning: Fullstack Cafe Membership CRM & Excel Closing Validation Engine
 
-## 🛠️ Technology Stack
-- **Runtime & Package Manager**: [Bun](https://bun.sh/)
-- **Backend Framework**: [ElysiaJS](https://elysiajs.com/)
-- **Database**: Postgres (via Drizzle ORM atau Prisma)
-- **Excel Parsing**: `exceljs` atau `xlsx` (SheetJS)
-- **Frontend**: React + Tailwind CSS (via Vite)
+## 🎯 Business Rules & Specifications
+- **Pendaftaran Member Baru:** 
+  - Biaya: Rp 30.000.
+  - Masa aktif: 3 bulan (dihitung sejak tanggal pendaftaran).
+  - Bonus awal: Otomatis mendapatkan **Stamp #1** + **Voucher Reward #1** (Free 1 cup: Americano / Cappuccino / Latte).
+- **Benefit Member Aktif:**
+  - Diskon tetap 15% untuk setiap transaksi.
+  - Tambah 1 Stamp untuk setiap minimum transaksi belanja Rp 50.000 (tidak ada sistem kelipatan, min. spending Rp 50k = 1 stamp).
+    - *Catatan:* Perhitungan minimum belanja Rp 50.000 diambil dari **Grand Total** (setelah diskon 15% diaplikasikan).
+  - **Aturan Transaksi:** Transaksi belanja biasa **TIDAK** menambah masa aktif (*expired date* tidak berubah).
+  - Tidak dapat digabungkan dengan promo lainnya.
+- **Loyalty Stamp Card Milestone:**
+  - **Stamp #1:** Free Americano / Cappuccino / Latte (diperoleh saat daftar).
+  - **Stamp #10:** Free 1 All Product.
+  - **Siklus Kartu:** Setelah mencapai Stamp #10, member akan mendapatkan **Kartu Virtual Baru** (Stamp di-reset). Sistem akan memberikan nomor/urutan kartu sehingga bisa di-tracking member sedang berada di kartu ke-berapa.
+- **Siklus Perpanjangan (*Renewal*) & Kedaluwarsa:**
+  - **Perpanjangan (sebelum expired):** Biaya Rp 30.000 -> Menambah masa aktif +3 bulan dan mendapatkan bonus **1 Stamp**.
+  - **Setelah Expired:** Jika masa aktif lewat tanpa perpanjangan, status member hangus/reset dan harus mendaftar ulang dari awal (registrasi baru Rp 30.000, reset stamp ke #1).
 
-## 📋 Objectives
-Membangun aplikasi web fullstack untuk mengunggah, memproses, dan menyimpan data dari file Excel (XLSX/CSV) ke dalam database Postgres, dengan antarmuka yang modern, dinamis, dan responsif.
+---
 
-## 🏗️ Architecture & Project Structure
-Proyek akan menggunakan arsitektur monorepo sederhana yang berisi backend dan frontend dalam satu repositori.
+## 📋 Implementation Checklist
 
-```text
-/
-├── backend/            # ElysiaJS + Bun
-│   ├── src/
-│   │   ├── controllers/  # Route handlers
-│   │   ├── db/           # Database setup & schema
-│   │   ├── services/     # Excel parsing logic
-│   │   └── index.ts      # App entry point
-│   └── package.json
-└── frontend/           # React + Vite + Tailwind
-    ├── src/
-    │   ├── components/   # UI Components (Uploader, Table)
-    │   ├── hooks/        # Custom React hooks (Data fetching)
-    │   └── App.tsx
-    ├── tailwind.config.js
-    └── package.json
-```
+### 1. Database Connection & Schema (Postgres + Drizzle)
+- [ ] Setup koneksi PostgreSQL menggunakan Drizzle ORM.
+- [ ] Buat skema tabel `members`: `id`, `qr_code_id` (UUID v4), `name`, `phone`, `stamps`, `current_card_number` (default: 1), `joined_at`, `expired_at`.
+- [ ] Buat skema tabel `vouchers`: `id`, `member_id`, `type` (e.g., 'FREE_CUP', 'FREE_ALL'), `is_used`, `created_at`.
+- [ ] Buat skema tabel `transactions`: `id`, `member_id`, `amount`, `discount_applied`, `stamps_earned`, `type` (REGISTRATION / RENEWAL / PURCHASE), `created_at`.
+- [ ] Buat skema tabel `pos_reconciliations`: `id`, `date`, `excel_total`, `system_total`, `is_fraud_detected`, `details`.
+- [ ] Setup migrasi dan sinkronisasi database (`db:push`).
 
-## 🚀 Implementation Phases
+### 2. Backend Excel Engine (ElysiaJS + Bun)
+- [ ] Integrasikan library `exceljs` untuk membaca laporan penutupan POS.
+- [ ] Buat endpoint `POST /api/closing/upload` untuk menerima file laporan Excel.
+- [ ] **Anti-Fraud Logic**: 
+  - Validasi total diskon 15% di sistem kasir terhadap riwayat transaksi aktif di database CRM.
+  - Cek kecocokan pengeluaran voucher (Free Cup / Free All) antara Excel POS dan database.
+- [ ] Simpan hasil validasi ke tabel `pos_reconciliations` dan kembalikan response *Match/Discrepancy*.
 
-### Phase 1: Setup & Initialization
-- [ ] Inisialisasi workspace.
-- [ ] Setup backend menggunakan ElysiaJS (`bun create elysia backend`).
-- [ ] Setup frontend menggunakan React + Vite (`bun create vite frontend --template react-ts`).
-- [ ] Konfigurasi Tailwind CSS di frontend untuk styling.
-- [ ] Setup database Postgres (bisa menggunakan Docker Compose atau cloud provider seperti Supabase/Neon).
-- [ ] Konfigurasi ORM (Drizzle direkomendasikan karena sangat cepat dan cocok dengan Bun) dan definisikan schema untuk menampung data dari Excel.
+### 3. Loyalty & Stamp System Logic
+- [ ] **API Registrasi / Daftar Ulang**: 
+  - Proses payment Rp 30.000, generate UUID QR, set `expired_at` 3 bulan.
+  - Berikan otomatis 1 Stamp dan catat 1 voucher `FREE_CUP` di tabel `vouchers`.
+- [ ] **API Transaksi Kasir**:
+  - Tolak transaksi jika `expired_at` member sudah lewat (paksa daftar ulang).
+  - Hitung **Grand Total** (setelah dipotong diskon 15%).
+  - Validasi minimal belanja Grand Total >= Rp 50.000 -> Jika ya, berikan *tepat* 1 Stamp (tanpa kelipatan).
+  - Jika stamp mencapai angka 10:
+    - Catat voucher `FREE_ALL` di tabel `vouchers`.
+    - Reset saldo `stamps` menjadi 0.
+    - Naikkan `current_card_number` + 1 (member masuk ke siklus kartu virtual berikutnya).
+  - **Ingat:** `expired_at` TIDAK diperbarui pada endpoint ini.
+- [ ] **API Perpanjangan (Renewal)**:
+  - Hanya bisa diakses jika member **belum** kedaluwarsa.
+  - Tambah masa aktif +3 bulan dari `expired_at` saat ini, serta tambahkan 1 Stamp.
+- [ ] **API Redeem Voucher**: Ubah flag `is_used = true` pada voucher yang dipilih pelanggan.
 
-### Phase 2: Backend Development (API & Data Parsing)
-- [ ] Konfigurasi koneksi database di backend.
-- [ ] Buat plugin/handler CORS di Elysia.
-- [ ] Buat endpoint API untuk upload file (`POST /api/upload`).
-- [ ] Integrasikan library `exceljs` untuk membaca dan mem-parsing buffer file Excel yang diunggah.
-- [ ] Buat logika validasi dan transformasi data baris Excel menjadi objek JSON.
-- [ ] Lakukan *bulk insert* data hasil parsing ke dalam Postgres.
-- [ ] Buat endpoint API (`GET /api/data`) untuk mengambil data yang tersimpan (dengan fitur paginasi/search).
+### 4. Frontend (React + Tailwind)
+- [ ] **QR Scanner Kasir**: Implementasi `@zxing/browser` atau `html5-qrcode` agar kasir bisa langsung mendeteksi UUID member.
+- [ ] **Dashboard Kasir**: 
+  - Tampilkan alert kuning jika member mendekati expired, atau alert merah jika sudah expired.
+  - Form transaksi yang otomatis menghitung apakah transaksi berhak dapat stamp atau tidak.
+  - UI daftar Voucher yang dimiliki untuk langsung di-redeem.
+- [ ] **Drag & Drop File Upload**: Komponen upload UI untuk kasir mengunggah Excel *closing* POS.
+- [ ] **Dashboard Admin (Anti-Fraud)**: Halaman laporan rekonsiliasi yang memberi peringatan jika terdeteksi manipulasi diskon.
 
-### Phase 3: Frontend Development (UI/UX)
-- [ ] Desain antarmuka utama yang terlihat premium dengan Tailwind CSS (menggunakan glassmorphism, gradient, dsb).
-- [ ] Implementasi komponen **Drag-and-Drop File Uploader** dengan feedback visual saat file ditarik dan proses upload berjalan.
-- [ ] Integrasi API upload ke backend menggunakan `fetch` atau `axios`.
-- [ ] Tampilkan toast notification (sukses/gagal).
-- [ ] Implementasi komponen **Data Table** modern untuk menampilkan data yang berhasil disimpan di database.
-- [ ] Tambahkan animasi dan transisi mikro saat berinteraksi (hover state, loading state).
-
-### Phase 4: Polish & Deployment
-- [ ] Lakukan error handling menyeluruh (contoh: jika format kolom Excel tidak valid, atau file terlalu besar).
-- [ ] Pastikan UI responsif di perangkat mobile maupun desktop.
-- [ ] Siapkan script untuk build produksi (`bun run build`).
-
-## 📦 Key Dependencies Preparation
-
-**Backend:**
-```bash
-# Di dalam folder backend/
-bun add elysia @elysiajs/cors
-bun add exceljs
-bun add drizzle-orm postgres
-bun add -D drizzle-kit
-```
-
-**Frontend:**
-```bash
-# Di dalam folder frontend/
-bun add lucide-react clsx tailwind-merge # Icon & utility classes
-bun add -D tailwindcss postcss autoprefixer
-```
+### 5. Security & Deployment
+- [ ] **Security**: JWT Auth, Enkripsi UUID QR Code, perlindungan endpoint dengan role kasir vs admin.
+- [ ] **Deployment**: Docker (Backend), Vercel/Netlify (Frontend), layanan Database tersentralisasi (Supabase/Neon).
